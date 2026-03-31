@@ -297,12 +297,16 @@ def register_signals() -> None:
         signal.signal(signum, receive_signal)
 
 
+def set_selector_events_mask(sock: Any, data: types.SimpleNamespace, events: int) -> None:
+    sel.modify(sock, events, data=data)
+
+
 def accept_wrapper(sock: Any) -> None:
     conn, addr = sock.accept()
     logger.warning("accepted connection from %s", addr)
     conn.setblocking(False)
     data = types.SimpleNamespace(addr=addr, outb=b"")
-    sel.register(conn, selectors.EVENT_READ | selectors.EVENT_WRITE, data=data)
+    sel.register(conn, selectors.EVENT_READ, data=data)
 
 
 def service_connection(key: selectors.SelectorKey, mask: int, config: Config) -> None:
@@ -312,7 +316,14 @@ def service_connection(key: selectors.SelectorKey, mask: int, config: Config) ->
     if mask & selectors.EVENT_READ:
         recv_data = sock.recv(4096)
         if recv_data:
-            data.outb += recv_data
+            message = bytes(recv_data)
+            msg_type = message[0]
+            handler = DISPATCH.get(msg_type, handle_other)
+            data.outb = handler(message, config)
+            if data.outb:
+                set_selector_events_mask(
+                    sock, data, selectors.EVENT_READ | selectors.EVENT_WRITE
+                )
         else:
             logger.warning("closing connection to %s", data.addr)
             sel.unregister(sock)
@@ -320,13 +331,10 @@ def service_connection(key: selectors.SelectorKey, mask: int, config: Config) ->
             return
 
     if mask & selectors.EVENT_WRITE and data.outb:
-        message = bytes(data.outb)
-        msg_type = message[0]
-        handler = DISPATCH.get(msg_type, handle_other)
-        response = handler(message, config)
-        data.outb = b""
-        if response:
-            sock.send(response)
+        sent = sock.send(data.outb)
+        data.outb = data.outb[sent:]
+        if not data.outb:
+            set_selector_events_mask(sock, data, selectors.EVENT_READ)
 
 
 def main(argv: list[str]) -> int:

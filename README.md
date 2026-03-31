@@ -80,6 +80,8 @@ Optional arguments:
 --log-level LEVEL     DEBUG, INFO, WARNING, ERROR
 ```
 
+For quieter logs in long-running lab setups, use `--log-level WARNING`.
+
 Example with explicit options:
 
 ```bash
